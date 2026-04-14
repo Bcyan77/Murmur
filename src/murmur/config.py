@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 if sys.version_info >= (3, 11):
@@ -23,10 +23,22 @@ DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config.default.toml"
 
 
 @dataclass
+class AppConfig:
+    first_run: bool = True
+    preset: str = "korean_optimized"
+    websocket_enabled: bool = False
+    websocket_port: int = 9090
+    subtitle_log: bool = False
+    log_level: str = "WARNING"
+
+
+@dataclass
 class AudioConfig:
     sample_rate: int = 16000
     chunk_duration_ms: int = 30
     queue_maxsize: int = 100
+    capture_mode: str = "system"   # "system" | "app"
+    target_app_pid: int = 0
 
 
 @dataclass
@@ -63,10 +75,12 @@ class OverlayConfig:
     bg_opacity: float = 0.8
     show_original: bool = True
     max_lines: int = 2
+    position: str = "bottom-center"
 
 
 @dataclass
 class MurmurConfig:
+    app: AppConfig = field(default_factory=AppConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     vad: VADConfig = field(default_factory=VADConfig)
     stt: STTConfig = field(default_factory=STTConfig)
@@ -111,11 +125,18 @@ def save_config(config: MurmurConfig, path: Path | None = None) -> None:
         tomli_w.dump(data, f)
 
 
+def _make(cls, data: dict):
+    """dataclass를 안전하게 생성한다 — 알 수 없는 키는 무시한다."""
+    valid = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in data.items() if k in valid})
+
+
 def _dict_to_config(data: dict) -> MurmurConfig:
     return MurmurConfig(
-        audio=AudioConfig(**data.get("audio", {})),
-        vad=VADConfig(**data.get("vad", {})),
-        stt=STTConfig(**data.get("stt", {})),
-        translator=TranslatorConfig(**data.get("translator", {})),
-        overlay=OverlayConfig(**data.get("overlay", {})),
+        app=_make(AppConfig, data.get("app", {})),
+        audio=_make(AudioConfig, data.get("audio", {})),
+        vad=_make(VADConfig, data.get("vad", {})),
+        stt=_make(STTConfig, data.get("stt", {})),
+        translator=_make(TranslatorConfig, data.get("translator", {})),
+        overlay=_make(OverlayConfig, data.get("overlay", {})),
     )
