@@ -73,6 +73,11 @@ class SubtitleOverlay(QWidget):
         self._translated_text = ""
         self.update()
 
+    def update_config(self, config: OverlayConfig) -> None:
+        """설정 변경 시 오버레이를 즉시 갱신한다."""
+        self._config = config
+        self.update()
+
     # ── Qt 이벤트 ──────────────────────────────────────────────────────────────
 
     def showEvent(self, event) -> None:

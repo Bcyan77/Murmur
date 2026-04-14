@@ -11,6 +11,7 @@ from murmur.config import MurmurConfig, load_config
 from murmur.pipeline.worker import InferenceWorker
 from murmur.ui.bridge import ResultBridge
 from murmur.ui.overlay import SubtitleOverlay
+from murmur.ui.settings import SettingsDialog
 from murmur.ui.tray import SystemTrayIcon
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class MurmurApp:
         self._tray.start_requested.connect(self._on_start)
         self._tray.stop_requested.connect(self._on_stop)
         self._tray.overlay_toggle_requested.connect(self._on_overlay_toggle)
+        self._tray.settings_requested.connect(self._on_settings)
         self._tray.quit_requested.connect(self._on_quit)
         self._bridge.result_received.connect(self._on_result)
 
@@ -129,6 +131,17 @@ class MurmurApp:
     def _on_result(self, result) -> None:
         # result: PipelineResult (Signal(object)로 전달됨)
         self._overlay.update_subtitle(result.original_text, result.translated_text)
+
+    def _on_settings(self) -> None:
+        dialog = SettingsDialog(self.config)
+        dialog.settings_applied.connect(self._on_settings_applied)
+        dialog.exec()
+
+    def _on_settings_applied(self, new_config: MurmurConfig) -> None:
+        self.config = new_config
+        # 오버레이 설정 즉시 반영
+        self._overlay.update_config(new_config.overlay)
+        logger.info("Settings applied")
 
     def _on_quit(self) -> None:
         logger.info("Quit requested")

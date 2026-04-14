@@ -11,6 +11,7 @@ class SystemTrayIcon(QSystemTrayIcon):
     start_requested = Signal()
     stop_requested = Signal()
     overlay_toggle_requested = Signal()
+    settings_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self, parent=None) -> None:
@@ -54,6 +55,11 @@ class SystemTrayIcon(QSystemTrayIcon):
 
         self._overlay_action = menu.addAction("자막 표시")
         self._overlay_action.triggered.connect(self.overlay_toggle_requested)
+
+        menu.addSeparator()
+
+        settings_action = menu.addAction("설정")
+        settings_action.triggered.connect(self.settings_requested)
 
         menu.addSeparator()
 

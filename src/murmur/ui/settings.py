@@ -1,0 +1,460 @@
+from __future__ import annotations
+
+import copy
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSlider,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from murmur.config import MurmurConfig, save_config
+
+# 지원 언어 목록 (표시명 → 코드/값)
+_STT_LANGUAGES = [
+    ("자동 감지", "auto"),
+    ("영어", "en"),
+    ("일본어", "ja"),
+    ("중국어", "zh"),
+    ("한국어", "ko"),
+    ("광둥어", "yue"),
+]
+
+_TARGET_LANGUAGES = [
+    ("한국어", "Korean"),
+    ("영어", "English"),
+    ("일본어", "Japanese"),
+    ("중국어", "Chinese"),
+]
+
+_LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
+
+_POSITIONS = [
+    ("하단 중앙", "bottom-center"),
+    ("하단 좌측", "bottom-left"),
+    ("하단 우측", "bottom-right"),
+    ("상단 중앙", "top-center"),
+]
+
+_PRESETS = [
+    ("저사양 (CPU 전용)", "low_spec"),
+    ("한국어 최적화 (10GB VRAM)", "korean_optimized"),
+    ("다국어 범용 (10GB VRAM)", "multilang"),
+    ("최고 정확도 (16GB+ VRAM)", "best_quality"),
+    ("커스텀", "custom"),
+]
+
+_STT_MODELS = [
+    ("SenseVoice-Small", "FunAudioLLM/SenseVoiceSmall"),
+    ("Whisper large-v3-turbo", "openai/whisper-large-v3-turbo"),
+    ("Canary-Qwen 2.5B", "nvidia/canary-qwen-2.5b"),
+]
+
+_TRANSLATOR_MODELS = [
+    ("Aya 23-8B (Q4)", "aya-23-8b-q4"),
+    ("NLLB-200 3.3B", "nllb-200-3.3b"),
+    ("NLLB-200 600M", "nllb-200-600m"),
+    ("Qwen3-4B", "qwen3-4b"),
+]
+
+_VAD_MODELS = [
+    ("fsmn-vad", "fsmn-vad"),
+    ("Silero VAD", "silero-vad"),
+]
+
+# 프리셋별 모델 설정
+_PRESET_MODELS: dict[str, dict] = {
+    "low_spec": {
+        "stt": "FunAudioLLM/SenseVoiceSmall",
+        "translator": "nllb-200-600m",
+        "vad": "fsmn-vad",
+    },
+    "korean_optimized": {
+        "stt": "FunAudioLLM/SenseVoiceSmall",
+        "translator": "aya-23-8b-q4",
+        "vad": "fsmn-vad",
+    },
+    "multilang": {
+        "stt": "openai/whisper-large-v3-turbo",
+        "translator": "nllb-200-3.3b",
+        "vad": "silero-vad",
+    },
+    "best_quality": {
+        "stt": "nvidia/canary-qwen-2.5b",
+        "translator": "qwen3-4b",
+        "vad": "silero-vad",
+    },
+}
+
+
+class SettingsDialog(QDialog):
+    """Murmur 설정 창 (오디오 / 자막 / 모델 / 고급 4탭)."""
+
+    settings_applied = Signal(object)  # MurmurConfig
+
+    def __init__(self, config: MurmurConfig, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Murmur 설정")
+        self.setMinimumWidth(460)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+
+        self._config = copy.deepcopy(config)
+        self._font_color = config.overlay.font_color
+        self._preset_changing = False  # 프리셋 변경 중 개별 모델 시그널 차단용
+
+        self._setup_ui()
+        self._load_config()
+
+    # ── 공개 API ───────────────────────────────────────────────────────────────
+
+    def get_config(self) -> MurmurConfig:
+        return self._config
+
+    # ── UI 구성 ────────────────────────────────────────────────────────────────
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._make_audio_tab(), "오디오")
+        self._tabs.addTab(self._make_subtitle_tab(), "자막")
+        self._tabs.addTab(self._make_model_tab(), "모델")
+        self._tabs.addTab(self._make_advanced_tab(), "고급")
+        layout.addWidget(self._tabs)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Apply
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        apply_btn = buttons.button(QDialogButtonBox.StandardButton.Apply)
+        apply_btn.setText("적용")
+        apply_btn.clicked.connect(self._on_apply)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    # ── 오디오 탭 ──────────────────────────────────────────────────────────────
+
+    def _make_audio_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        # 캡처 모드
+        self._capture_mode = QComboBox()
+        self._capture_mode.addItem("시스템 전체 오디오", "system")
+        self._capture_mode.addItem("특정 앱 지정 (Phase 5)", "app")
+        self._capture_mode.model().item(1).setEnabled(False)
+        layout.addRow("캡처 모드:", self._capture_mode)
+
+        # 원본 언어
+        self._source_language = QComboBox()
+        for label, code in _STT_LANGUAGES:
+            self._source_language.addItem(label, code)
+        layout.addRow("원본 언어:", self._source_language)
+
+        # 번역 대상 언어
+        self._target_language = QComboBox()
+        for label, code in _TARGET_LANGUAGES:
+            self._target_language.addItem(label, code)
+        layout.addRow("번역 언어:", self._target_language)
+
+        return widget
+
+    # ── 자막 탭 ────────────────────────────────────────────────────────────────
+
+    def _make_subtitle_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        # 글꼴
+        self._font_family = QLineEdit()
+        layout.addRow("글꼴:", self._font_family)
+
+        # 글꼴 크기
+        self._font_size = QSpinBox()
+        self._font_size.setRange(10, 72)
+        layout.addRow("글꼴 크기:", self._font_size)
+
+        # 글꼴 색상
+        color_row = QWidget()
+        color_layout = QHBoxLayout(color_row)
+        color_layout.setContentsMargins(0, 0, 0, 0)
+        self._color_preview = QLabel()
+        self._color_preview.setFixedSize(40, 24)
+        self._color_preview.setAutoFillBackground(True)
+        self._color_btn = QPushButton("선택...")
+        self._color_btn.clicked.connect(self._pick_color)
+        color_layout.addWidget(self._color_preview)
+        color_layout.addWidget(self._color_btn)
+        color_layout.addStretch()
+        layout.addRow("글꼴 색상:", color_row)
+
+        # 배경 투명도
+        opacity_row = QWidget()
+        opacity_layout = QHBoxLayout(opacity_row)
+        opacity_layout.setContentsMargins(0, 0, 0, 0)
+        self._bg_opacity = QSlider(Qt.Orientation.Horizontal)
+        self._bg_opacity.setRange(0, 100)
+        self._opacity_label = QLabel("80%")
+        self._bg_opacity.valueChanged.connect(
+            lambda v: self._opacity_label.setText(f"{v}%")
+        )
+        opacity_layout.addWidget(self._bg_opacity)
+        opacity_layout.addWidget(self._opacity_label)
+        layout.addRow("배경 투명도:", opacity_row)
+
+        # 위치
+        self._position = QComboBox()
+        for label, code in _POSITIONS:
+            self._position.addItem(label, code)
+        layout.addRow("기본 위치:", self._position)
+
+        # 원문 표시
+        self._show_original = QCheckBox("원문도 함께 표시")
+        layout.addRow("", self._show_original)
+
+        # 최대 줄 수
+        self._max_lines = QSpinBox()
+        self._max_lines.setRange(1, 6)
+        layout.addRow("최대 줄 수:", self._max_lines)
+
+        return widget
+
+    # ── 모델 탭 ────────────────────────────────────────────────────────────────
+
+    def _make_model_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        preset_group = QGroupBox("프리셋")
+        preset_form = QFormLayout(preset_group)
+        self._preset = QComboBox()
+        for label, code in _PRESETS:
+            self._preset.addItem(label, code)
+        self._preset.currentIndexChanged.connect(self._on_preset_changed)
+        preset_form.addRow("프리셋:", self._preset)
+        layout.addWidget(preset_group)
+
+        model_group = QGroupBox("개별 모델 설정")
+        model_form = QFormLayout(model_group)
+
+        self._stt_model = QComboBox()
+        for label, code in _STT_MODELS:
+            self._stt_model.addItem(label, code)
+        self._stt_model.currentIndexChanged.connect(self._on_model_manual_change)
+        model_form.addRow("STT 모델:", self._stt_model)
+
+        self._translator_model = QComboBox()
+        for label, code in _TRANSLATOR_MODELS:
+            self._translator_model.addItem(label, code)
+        self._translator_model.currentIndexChanged.connect(self._on_model_manual_change)
+        model_form.addRow("번역 모델:", self._translator_model)
+
+        self._vad_model = QComboBox()
+        for label, code in _VAD_MODELS:
+            self._vad_model.addItem(label, code)
+        self._vad_model.currentIndexChanged.connect(self._on_model_manual_change)
+        model_form.addRow("VAD:", self._vad_model)
+
+        layout.addWidget(model_group)
+
+        note = QLabel(
+            "※ 프리셋 변경 시 개별 모델이 자동으로 설정됩니다.\n"
+            "※ 개별 모델 수동 변경 시 프리셋이 '커스텀'으로 전환됩니다."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(note)
+        layout.addStretch()
+
+        return widget
+
+    # ── 고급 탭 ────────────────────────────────────────────────────────────────
+
+    def _make_advanced_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        # 무음 경계
+        self._silence_duration = QDoubleSpinBox()
+        self._silence_duration.setRange(0.5, 5.0)
+        self._silence_duration.setSingleStep(0.1)
+        self._silence_duration.setDecimals(1)
+        self._silence_duration.setSuffix(" 초")
+        layout.addRow("무음 경계:", self._silence_duration)
+
+        # GPU 디바이스
+        self._gpu_device = QComboBox()
+        self._gpu_device.setEditable(True)
+        self._gpu_device.addItem("cuda:0")
+        self._gpu_device.addItem("cpu")
+        layout.addRow("GPU 디바이스:", self._gpu_device)
+
+        # WebSocket
+        ws_row = QWidget()
+        ws_layout = QHBoxLayout(ws_row)
+        ws_layout.setContentsMargins(0, 0, 0, 0)
+        self._ws_enabled = QCheckBox("활성화")
+        self._ws_port = QSpinBox()
+        self._ws_port.setRange(1024, 65535)
+        self._ws_port.setPrefix("포트: ")
+        self._ws_enabled.toggled.connect(self._ws_port.setEnabled)
+        ws_layout.addWidget(self._ws_enabled)
+        ws_layout.addWidget(self._ws_port)
+        ws_layout.addStretch()
+        layout.addRow("WebSocket 출력:", ws_row)
+
+        # 자막 로그
+        self._subtitle_log = QCheckBox("자막을 SRT 파일로 자동 저장")
+        layout.addRow("자막 히스토리:", self._subtitle_log)
+
+        # 로그 레벨
+        self._log_level = QComboBox()
+        for lvl in _LOG_LEVELS:
+            self._log_level.addItem(lvl)
+        layout.addRow("로그 레벨:", self._log_level)
+
+        return widget
+
+    # ── 설정 로드/저장 ─────────────────────────────────────────────────────────
+
+    def _load_config(self) -> None:
+        cfg = self._config
+
+        # 오디오 탭
+        _set_combo_by_data(self._capture_mode, cfg.audio.capture_mode)
+        _set_combo_by_data(self._source_language, cfg.stt.language)
+        _set_combo_by_data(self._target_language, cfg.translator.target_language)
+
+        # 자막 탭
+        self._font_family.setText(cfg.overlay.font_family)
+        self._font_size.setValue(cfg.overlay.font_size)
+        self._font_color = cfg.overlay.font_color
+        self._update_color_preview()
+        self._bg_opacity.setValue(int(cfg.overlay.bg_opacity * 100))
+        _set_combo_by_data(self._position, cfg.overlay.position)
+        self._show_original.setChecked(cfg.overlay.show_original)
+        self._max_lines.setValue(cfg.overlay.max_lines)
+
+        # 모델 탭
+        _set_combo_by_data(self._preset, cfg.app.preset)
+        _set_combo_by_data(self._stt_model, cfg.stt.model_name)
+        _set_combo_by_data(self._vad_model, cfg.vad.model_name)
+        # translator model_path는 내부 ID 매핑 없으므로 첫 번째 항목 유지 (기본값)
+
+        # 고급 탭
+        self._silence_duration.setValue(cfg.vad.silence_duration_ms / 1000.0)
+        _set_combo_by_text(self._gpu_device, cfg.stt.device)
+        self._ws_enabled.setChecked(cfg.app.websocket_enabled)
+        self._ws_port.setValue(cfg.app.websocket_port)
+        self._ws_port.setEnabled(cfg.app.websocket_enabled)
+        self._subtitle_log.setChecked(cfg.app.subtitle_log)
+        _set_combo_by_text(self._log_level, cfg.app.log_level)
+
+    def _collect_config(self) -> MurmurConfig:
+        cfg = copy.deepcopy(self._config)
+
+        # 오디오
+        cfg.audio.capture_mode = self._capture_mode.currentData()
+        cfg.stt.language = self._source_language.currentData()
+        cfg.translator.target_language = self._target_language.currentData()
+
+        # 자막
+        cfg.overlay.font_family = self._font_family.text().strip() or "Malgun Gothic"
+        cfg.overlay.font_size = self._font_size.value()
+        cfg.overlay.font_color = self._font_color
+        cfg.overlay.bg_opacity = self._bg_opacity.value() / 100.0
+        cfg.overlay.position = self._position.currentData()
+        cfg.overlay.show_original = self._show_original.isChecked()
+        cfg.overlay.max_lines = self._max_lines.value()
+
+        # 모델
+        cfg.app.preset = self._preset.currentData()
+        cfg.stt.model_name = self._stt_model.currentData()
+        cfg.vad.model_name = self._vad_model.currentData()
+
+        # 고급
+        cfg.vad.silence_duration_ms = int(self._silence_duration.value() * 1000)
+        cfg.stt.device = self._gpu_device.currentText().strip()
+        cfg.app.websocket_enabled = self._ws_enabled.isChecked()
+        cfg.app.websocket_port = self._ws_port.value()
+        cfg.app.subtitle_log = self._subtitle_log.isChecked()
+        cfg.app.log_level = self._log_level.currentText()
+
+        return cfg
+
+    # ── 슬롯 ──────────────────────────────────────────────────────────────────
+
+    def _on_apply(self) -> None:
+        self._config = self._collect_config()
+        save_config(self._config)
+        self.settings_applied.emit(self._config)
+        self.accept()
+
+    def _pick_color(self) -> None:
+        initial = QColor(self._font_color)
+        color = QColorDialog.getColor(initial, self, "글꼴 색상 선택")
+        if color.isValid():
+            self._font_color = color.name().upper()
+            self._update_color_preview()
+
+    def _update_color_preview(self) -> None:
+        palette = self._color_preview.palette()
+        palette.setColor(self._color_preview.backgroundRole(), QColor(self._font_color))
+        self._color_preview.setPalette(palette)
+        self._color_preview.setToolTip(self._font_color)
+
+    def _on_preset_changed(self, index: int) -> None:
+        preset_id = self._preset.itemData(index)
+        if preset_id == "custom" or preset_id not in _PRESET_MODELS:
+            return
+
+        self._preset_changing = True
+        models = _PRESET_MODELS[preset_id]
+        _set_combo_by_data(self._stt_model, models["stt"])
+        _set_combo_by_data(self._vad_model, models["vad"])
+        # translator_model 콤보는 내부 ID 매핑으로 설정
+        _set_combo_by_data(self._translator_model, models["translator"])
+        self._preset_changing = False
+
+    def _on_model_manual_change(self) -> None:
+        if self._preset_changing:
+            return
+        _set_combo_by_data(self._preset, "custom")
+
+
+# ── 헬퍼 ──────────────────────────────────────────────────────────────────────
+
+def _set_combo_by_data(combo: QComboBox, data: str) -> None:
+    for i in range(combo.count()):
+        if combo.itemData(i) == data:
+            combo.setCurrentIndex(i)
+            return
+
+
+def _set_combo_by_text(combo: QComboBox, text: str) -> None:
+    idx = combo.findText(text, Qt.MatchFlag.MatchFixedString)
+    if idx >= 0:
+        combo.setCurrentIndex(idx)
+    else:
+        combo.setCurrentText(text)
