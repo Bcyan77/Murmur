@@ -13,6 +13,7 @@ from murmur.ui.bridge import ResultBridge
 from murmur.ui.overlay import SubtitleOverlay
 from murmur.ui.settings import SettingsDialog
 from murmur.ui.tray import SystemTrayIcon
+from murmur.ui.wizard import SetupWizard
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,10 @@ class MurmurApp:
         self._tray.show()
         logger.info("Murmur started — tray icon visible")
 
+        # 최초 실행 시 설정 마법사 표시
+        if self.config.app.first_run:
+            self._show_wizard()
+
         return self._qt_app.exec()
 
     # ── 슬롯 ──────────────────────────────────────────────────────────────────
@@ -131,6 +136,16 @@ class MurmurApp:
     def _on_result(self, result) -> None:
         # result: PipelineResult (Signal(object)로 전달됨)
         self._overlay.update_subtitle(result.original_text, result.translated_text)
+
+    def _show_wizard(self) -> None:
+        wizard = SetupWizard(self.config)
+        wizard.wizard_completed.connect(self._on_wizard_completed)
+        wizard.exec()
+
+    def _on_wizard_completed(self, new_config: MurmurConfig) -> None:
+        self.config = new_config
+        self._overlay.update_config(new_config.overlay)
+        logger.info("Setup wizard completed")
 
     def _on_settings(self) -> None:
         dialog = SettingsDialog(self.config)
