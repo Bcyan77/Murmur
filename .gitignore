@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 가상환경
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 모델 파일
+models/
+*.bin
+*.gguf
+*.pt
+*.onnx
+
+# 환경 설정
+.env
+
+# CLAUDE
+CLAUDE.local.md

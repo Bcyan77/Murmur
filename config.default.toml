@@ -1,0 +1,32 @@
+[audio]
+sample_rate = 16000
+chunk_duration_ms = 30
+queue_maxsize = 100
+
+[vad]
+model_name = "fsmn-vad"
+max_single_segment_time = 30000
+silence_duration_ms = 1500
+
+[stt]
+model_name = "FunAudioLLM/SenseVoiceSmall"
+device = "cuda:0"
+language = "auto"
+use_itn = true
+batch_size_s = 60
+
+[translator]
+model_path = ""
+target_language = "Korean"
+n_ctx = 2048
+n_gpu_layers = -1
+temperature = 0.1
+max_tokens = 256
+
+[overlay]
+font_family = "Malgun Gothic"
+font_size = 24
+font_color = "#FFFFFF"
+bg_opacity = 0.8
+show_original = true
+max_lines = 2

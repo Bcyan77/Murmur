@@ -1,0 +1,31 @@
+[project]
+name = "murmur"
+version = "0.1.0"
+description = "실시간 자막 번역 데스크톱 앱"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "PySide6>=6.6,<6.9",
+    "PyAudioWPatch>=0.2.12",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "funasr>=1.1",
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "tomli-w>=1.0",
+    "tomli>=2.0; python_version < '3.11'",
+    "soundfile>=0.12",
+    "huggingface-hub>=0.20",
+]
+
+[project.optional-dependencies]
+translation = ["llama-cpp-python>=0.2.50"]
+
+[project.scripts]
+murmur = "murmur.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/murmur"]
