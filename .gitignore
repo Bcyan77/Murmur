@@ -25,5 +25,9 @@ models/
 # 환경 설정
 .env
 
+# 테스트 결과물
+test_*.wav
+test_*_output.*
+
 # CLAUDE
 CLAUDE.local.md
