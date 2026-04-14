@@ -1,7 +1,17 @@
+[app]
+first_run = true
+preset = "korean_optimized"
+websocket_enabled = false
+websocket_port = 9090
+subtitle_log = false
+log_level = "WARNING"
+
 [audio]
 sample_rate = 16000
 chunk_duration_ms = 30
 queue_maxsize = 100
+capture_mode = "system"
+target_app_pid = 0
 
 [vad]
 model_name = "fsmn-vad"
@@ -30,3 +40,4 @@ font_color = "#FFFFFF"
 bg_opacity = 0.8
 show_original = true
 max_lines = 2
+position = "bottom-center"
