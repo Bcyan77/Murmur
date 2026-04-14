@@ -9,8 +9,8 @@
 
 - [x] 1. 프로젝트 구조 생성 (pyproject.toml, 디렉토리 구조, uv venv, 의존성 정의)
 - [x] 2. 시스템 오디오 캡처 모듈 (PyAudioWPatch WASAPI Loopback → 16kHz 모노 리샘플링)
-- [ ] 3. SenseVoice-Small STT 단독 테스트 (WAV 파일 입력 → 텍스트 출력)
-- [ ] 4. VAD 연동 (fsmn-vad 스트리밍 모드, 발화 경계 감지)
+- [x] 3. SenseVoice-Small STT 단독 테스트 (WAV 파일 입력 → 텍스트 출력)
+- [x] 4. VAD 연동 (에너지 기반 침묵 감지로 전환, fsmn-vad 스트리밍 대체)
 
 > **마일스톤:** 시스템 오디오를 캡처하여 콘솔에 전사 텍스트가 출력됨
 
