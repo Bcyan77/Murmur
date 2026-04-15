@@ -1,4 +1,4 @@
-"""모델 프리셋 정의 및 추천 로직."""
+"""모델 프리셋 정의 및 권장 로직."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -88,14 +88,32 @@ _FSMN_VAD = ModelSpec(
     name="fsmn-vad",
     model_id="fsmn-vad",
     size_mb=36,
-    source="huggingface",
+    source="builtin",  # funasr가 SenseVoice 로드 시 자동 설치
 )
 _SILERO_VAD = ModelSpec(
     name="Silero VAD",
     model_id="snakers4/silero-vad",
     size_mb=2,
-    source="huggingface",
+    source="builtin",  # torch.hub/pip로 첫 실행 시 자동 로드
 )
+
+
+# 모든 ModelSpec을 model_id로 조회할 수 있는 레지스트리.
+# 커스텀 프리셋에서 개별 선택된 모델의 메타데이터를 찾을 때 사용.
+ALL_MODELS: dict[str, ModelSpec] = {
+    spec.model_id: spec
+    for spec in (
+        _SENSE_VOICE,
+        _WHISPER_TURBO,
+        _CANARY_QWEN,
+        _NLLB_600M,
+        _NLLB_3B,
+        _AYA_23_8B_Q4,
+        _QWEN3_4B,
+        _FSMN_VAD,
+        _SILERO_VAD,
+    )
+}
 
 
 # ── 프리셋 목록 ────────────────────────────────────────────────────────────────
@@ -155,7 +173,7 @@ def get_preset(preset_id: str) -> Preset | None:
 
 
 def recommend_preset(hw: HardwareInfo) -> PresetID:
-    """하드웨어 정보를 기반으로 최적 프리셋을 추천한다."""
+    """하드웨어 정보를 기반으로 최적 프리셋을 권장한다."""
     if not hw.has_cuda:
         return PresetID.LOW_SPEC
 

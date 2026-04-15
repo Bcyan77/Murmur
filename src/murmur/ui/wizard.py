@@ -1,6 +1,6 @@
 """초기 설정 마법사 (4단계).
 
-Step 1: PC 사양 감지 + 프리셋 추천
+Step 1: PC 사양 감지 + 프리셋 권장
 Step 2: 모델 다운로드 상태 확인
 Step 3: 언어 설정
 Step 4: 기본 테스트
@@ -52,12 +52,17 @@ _TARGET_LANGUAGES = [
 ]
 
 _SOURCE_LANGUAGE_PRESETS = [
-    ("영어 → 한국어", "en"),
-    ("일본어 → 한국어", "ja"),
-    ("중국어 → 한국어", "zh"),
-    ("광둥어 → 한국어", "yue"),
+    ("영어", "en"),
+    ("일본어", "ja"),
+    ("중국어", "zh"),
+    ("광둥어", "yue"),
     ("자동 감지 (모든 언어)", "auto"),
 ]
+
+
+from murmur.ui.model_download import DownloadRow as _DownloadRow
+from murmur.ui.model_download import ModelDownloadThread as _ModelDownloadThread  # noqa: F401 (레거시 참조)
+from murmur.ui.model_download import estimate_repo_size as _estimate_repo_size  # noqa: F401
 
 
 # ── 백그라운드 스레드 ──────────────────────────────────────────────────────────
@@ -70,49 +75,10 @@ class _HardwareDetectThread(QThread):
         self.detected.emit(hw)
 
 
-class _ModelDownloadThread(QThread):
-    """단일 모델 다운로드 진행상황을 emit한다."""
-    progress = Signal(int, str)   # percent, message
-    finished = Signal(bool, str)  # success, message
-
-    def __init__(self, model_id: str, source: str, parent=None) -> None:
-        super().__init__(parent)
-        self._model_id = model_id
-        self._source = source
-
-    def run(self) -> None:
-        try:
-            if self._source == "huggingface":
-                self._download_hf()
-            else:
-                self.finished.emit(
-                    False,
-                    f"GGUF 모델은 수동으로 다운로드 후 설정에서 경로를 지정하세요.\n"
-                    f"모델 ID: {self._model_id}",
-                )
-        except Exception as e:
-            self.finished.emit(False, str(e))
-
-    def _download_hf(self) -> None:
-        from huggingface_hub import snapshot_download  # type: ignore[import-untyped]
-
-        self.progress.emit(0, "HuggingFace에서 모델 정보를 가져오는 중...")
-
-        def _progress_cb(item):
-            pass  # huggingface_hub 콜백 — 여기서는 단순 완료만 확인
-
-        snapshot_download(
-            repo_id=self._model_id,
-            local_files_only=False,
-        )
-        self.progress.emit(100, "다운로드 완료")
-        self.finished.emit(True, "")
-
-
 # ── 각 단계 위젯 ──────────────────────────────────────────────────────────────
 
 class _Step1Widget(QWidget):
-    """Step 1: PC 사양 감지 + 프리셋 추천."""
+    """Step 1: PC 사양 감지 + 프리셋 권장."""
 
     preset_selected = Signal(str)  # preset_id
 
@@ -216,16 +182,16 @@ class _Step1Widget(QWidget):
                 btn.setText(f"{preset.name}  ← {reason}")
                 btn.setStyleSheet("color: gray;")
             elif pid == recommended.value:
-                btn.setText(f"{preset.name}  ← 추천")
+                btn.setText(f"{preset.name}  ← 권장")
                 btn.setStyleSheet("font-weight: bold;")
 
             if pid == recommended.value and runnable:
                 btn.setChecked(True)
             elif pid == recommended.value and not runnable:
-                # 추천 프리셋을 실행할 수 없으면 저사양으로 폴백
+                # 권장 프리셋을 실행할 수 없으면 저사양으로 폴백
                 pass
 
-        # 추천 프리셋이 비활성이면 저사양을 선택
+        # 권장 프리셋이 비활성이면 저사양을 선택
         checked_any = any(btn.isChecked() for btn in self._preset_btns)
         if not checked_any:
             for btn in self._preset_btns:
@@ -287,117 +253,6 @@ class _Step2Widget(QWidget):
             self._models_layout.addWidget(row)
 
 
-class _DownloadRow(QWidget):
-    """개별 모델 다운로드 행."""
-
-    def __init__(self, name: str, model_id: str, size_mb: int, source: str, parent=None) -> None:
-        super().__init__(parent)
-        self._model_id = model_id
-        self._source = source
-        self._thread: _ModelDownloadThread | None = None
-        self._setup_ui(name, size_mb, source)
-
-    def _setup_ui(self, name: str, size_mb: int, source: str) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 4)
-        layout.setSpacing(4)
-
-        top = QWidget()
-        top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-
-        name_lbl = QLabel(f"<b>{name}</b>")
-        size_lbl = QLabel(f"[{size_mb:,} MB]")
-        size_lbl.setStyleSheet("color: gray; font-size: 11px;")
-
-        self._status_lbl = QLabel()
-        self._btn = QPushButton("다운로드" if source == "huggingface" else "경로 안내")
-        self._btn.setFixedWidth(90)
-        self._btn.clicked.connect(self._on_download)
-
-        top_layout.addWidget(name_lbl)
-        top_layout.addWidget(size_lbl)
-        top_layout.addStretch()
-        top_layout.addWidget(self._status_lbl)
-        top_layout.addWidget(self._btn)
-        layout.addWidget(top)
-
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 100)
-        self._progress.setValue(0)
-        self._progress.setVisible(False)
-        layout.addWidget(self._progress)
-
-        self._msg_lbl = QLabel()
-        self._msg_lbl.setWordWrap(True)
-        self._msg_lbl.setStyleSheet("font-size: 11px; color: gray;")
-        self._msg_lbl.setVisible(False)
-        layout.addWidget(self._msg_lbl)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #ddd;")
-        layout.addWidget(sep)
-
-        self._check_cached()
-
-    def _check_cached(self) -> None:
-        """모델이 이미 캐시되어 있으면 '준비됨'으로 표시한다."""
-        if self._source == "huggingface":
-            try:
-                from huggingface_hub import try_to_load_from_cache  # type: ignore[import-untyped]
-                result = try_to_load_from_cache(repo_id=self._model_id, filename="config.json")
-                if result is not None:
-                    self._set_ready()
-                    return
-            except Exception:
-                pass
-        self._status_lbl.setText("미설치")
-        self._status_lbl.setStyleSheet("color: #CC4400;")
-
-    def _set_ready(self) -> None:
-        self._status_lbl.setText("준비됨 ✓")
-        self._status_lbl.setStyleSheet("color: #228822;")
-        self._btn.setEnabled(False)
-        self._btn.setText("완료")
-
-    def _on_download(self) -> None:
-        if self._source != "huggingface":
-            self._msg_lbl.setText(
-                f"Hugging Face에서 GGUF 파일을 직접 다운로드하세요:\n"
-                f"https://huggingface.co/{self._model_id}\n"
-                f"다운로드 후 설정 → 모델 탭에서 경로를 지정하세요."
-            )
-            self._msg_lbl.setVisible(True)
-            return
-
-        self._btn.setEnabled(False)
-        self._btn.setText("다운로드 중")
-        self._progress.setVisible(True)
-        self._progress.setValue(0)
-
-        self._thread = _ModelDownloadThread(self._model_id, self._source, self)
-        self._thread.progress.connect(self._on_progress)
-        self._thread.finished.connect(self._on_finished)
-        self._thread.start()
-
-    def _on_progress(self, pct: int, msg: str) -> None:
-        self._progress.setValue(pct)
-        self._status_lbl.setText(msg)
-
-    def _on_finished(self, success: bool, msg: str) -> None:
-        self._progress.setVisible(False)
-        if success:
-            self._set_ready()
-        else:
-            self._btn.setEnabled(True)
-            self._btn.setText("재시도")
-            self._msg_lbl.setText(msg)
-            self._msg_lbl.setVisible(True)
-            self._status_lbl.setText("실패")
-            self._status_lbl.setStyleSheet("color: red;")
-
-
 class _Step3Widget(QWidget):
     """Step 3: 언어 설정."""
 
@@ -412,7 +267,10 @@ class _Step3Widget(QWidget):
         return "auto"
 
     def target_language(self) -> str:
-        return self._target_lang.currentData()
+        for btn, code in self._target_btns:
+            if btn.isChecked():
+                return code
+        return "Korean"
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -422,11 +280,15 @@ class _Step3Widget(QWidget):
         title.setFont(QFont("", 12, QFont.Weight.Bold))
         layout.addWidget(title)
 
-        note = QLabel("주로 번역할 언어 조합을 선택하세요.\n설정 창에서 언제든지 변경할 수 있습니다.")
+        note = QLabel(
+            "캡처할 원본 언어와 표시할 자막 언어를 선택하세요.\n"
+            "설정 창에서 언제든지 변경할 수 있습니다."
+        )
         note.setWordWrap(True)
         note.setStyleSheet("color: #555;")
         layout.addWidget(note)
 
+        # 원본 언어
         src_group = QGroupBox("원본 언어")
         src_layout = QVBoxLayout(src_group)
         self._lang_btns: list[tuple[QRadioButton, str]] = []
@@ -441,12 +303,19 @@ class _Step3Widget(QWidget):
                 btn.setChecked(True)
         layout.addWidget(src_group)
 
-        tgt_group = QGroupBox("번역 대상 언어")
-        tgt_layout = QFormLayout(tgt_group)
-        self._target_lang = QComboBox()
+        # 자막 언어
+        tgt_group = QGroupBox("자막 언어")
+        tgt_layout = QVBoxLayout(tgt_group)
+        self._target_btns: list[tuple[QRadioButton, str]] = []
+        tgt_btn_group = QButtonGroup(self)
+
         for label, code in _TARGET_LANGUAGES:
-            self._target_lang.addItem(label, code)
-        tgt_layout.addRow("번역 언어:", self._target_lang)
+            btn = QRadioButton(label)
+            tgt_btn_group.addButton(btn)
+            self._target_btns.append((btn, code))
+            tgt_layout.addWidget(btn)
+            if code == "Korean":
+                btn.setChecked(True)
         layout.addWidget(tgt_group)
 
         layout.addStretch()
@@ -501,14 +370,47 @@ class SetupWizard(QDialog):
         self.setWindowTitle("Murmur 초기 설정")
         self.setMinimumSize(520, 460)
         self.setWindowFlags(
-            self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowCloseButtonHint
         )
 
         self._config = copy.deepcopy(config)
         self._setup_ui()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # 트레이 앱은 주 창이 없으므로 마법사가 뒤에 숨지 않도록 명시적으로 전면화
+        self.raise_()
+        self.activateWindow()
+
     def get_config(self) -> MurmurConfig:
         return self._config
+
+    # ── 닫기 처리 ──────────────────────────────────────────────────────────────
+
+    def reject(self) -> None:
+        """X 버튼/Esc 등으로 닫을 때: 실행 중 스레드만 정리하고 설정은 건드리지 않는다.
+
+        사용자가 취소한 경우 `first_run` 플래그를 그대로 두어 다음 실행 때
+        다시 마법사가 나타나도록 한다.
+        """
+        self._cleanup_threads()
+        super().reject()
+
+    def _cleanup_threads(self) -> None:
+        threads = [getattr(self._step1, "_thread", None)]
+        for row in getattr(self._step2, "_download_rows", {}).values():
+            threads.append(getattr(row, "_thread", None))
+
+        for t in threads:
+            if t is None or not t.isRunning():
+                continue
+            t.quit()
+            if not t.wait(2000):
+                t.terminate()
+                t.wait(1000)
 
     # ── UI 구성 ────────────────────────────────────────────────────────────────
 

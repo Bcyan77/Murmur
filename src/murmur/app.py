@@ -81,6 +81,7 @@ class MurmurApp:
         self._tray.stop_requested.connect(self._on_stop)
         self._tray.overlay_toggle_requested.connect(self._on_overlay_toggle)
         self._tray.settings_requested.connect(self._on_settings)
+        self._tray.wizard_requested.connect(self._show_wizard)
         self._tray.audio_source_changed.connect(self._on_audio_source_changed)
         self._tray.quit_requested.connect(self._on_quit)
         self._bridge.result_received.connect(self._on_result)
@@ -99,6 +100,11 @@ class MurmurApp:
         # 최초 실행 시 설정 마법사 표시
         if self.config.app.first_run:
             self._show_wizard()
+        else:
+            self._tray.show_info(
+                "Murmur가 시스템 트레이에 실행 중입니다. 아이콘 우클릭으로 메뉴를 여세요.",
+                msecs=4000,
+            )
 
         return self._qt_app.exec()
 

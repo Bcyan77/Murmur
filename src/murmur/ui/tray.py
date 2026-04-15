@@ -15,6 +15,7 @@ class SystemTrayIcon(QSystemTrayIcon):
     stop_requested = Signal()
     overlay_toggle_requested = Signal()
     settings_requested = Signal()
+    wizard_requested = Signal()
     quit_requested = Signal()
     # (mode, pid): mode is "system" or "app"; pid is 0 for system mode
     audio_source_changed = Signal(str, int)
@@ -77,6 +78,9 @@ class SystemTrayIcon(QSystemTrayIcon):
 
         settings_action = menu.addAction("설정")
         settings_action.triggered.connect(self.settings_requested)
+
+        wizard_action = menu.addAction("초기 설정 마법사")
+        wizard_action.triggered.connect(self.wizard_requested)
 
         menu.addSeparator()
 
