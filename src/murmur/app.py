@@ -6,8 +6,8 @@ import sys
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QApplication
 
-from murmur.audio.capture import AudioCapture
-from murmur.config import MurmurConfig, load_config
+from murmur.audio.capture import BaseCapture, create_capture
+from murmur.config import MurmurConfig, load_config, save_config
 from murmur.pipeline.worker import InferenceWorker
 from murmur.ui.bridge import ResultBridge
 from murmur.ui.overlay import SubtitleOverlay
@@ -50,7 +50,7 @@ class MurmurApp:
         # 컴포넌트는 run() 호출 후 초기화 (QApplication 생성 후 Qt 객체 생성 필요)
         self._qt_app: QApplication | None = None
         self._worker: InferenceWorker | None = None
-        self._capture: AudioCapture | None = None
+        self._capture: BaseCapture | None = None
         self._bridge: ResultBridge | None = None
         self._overlay: SubtitleOverlay | None = None
         self._tray: SystemTrayIcon | None = None
@@ -63,18 +63,22 @@ class MurmurApp:
 
         # 추론 파이프라인 컴포넌트
         self._worker = InferenceWorker(self.config)
-        self._capture = AudioCapture(self._worker.audio_queue, self.config.audio)
+        self._capture = create_capture(self._worker.audio_queue, self.config.audio)
         self._bridge = ResultBridge(self._worker.result_queue)
 
         # UI 컴포넌트
         self._overlay = SubtitleOverlay(self.config.overlay)
         self._tray = SystemTrayIcon()
+        self._tray.set_audio_source(
+            self.config.audio.capture_mode, self.config.audio.target_app_pid
+        )
 
         # 시그널 연결
         self._tray.start_requested.connect(self._on_start)
         self._tray.stop_requested.connect(self._on_stop)
         self._tray.overlay_toggle_requested.connect(self._on_overlay_toggle)
         self._tray.settings_requested.connect(self._on_settings)
+        self._tray.audio_source_changed.connect(self._on_audio_source_changed)
         self._tray.quit_requested.connect(self._on_quit)
         self._bridge.result_received.connect(self._on_result)
 
@@ -146,6 +150,23 @@ class MurmurApp:
         self.config = new_config
         self._overlay.update_config(new_config.overlay)
         logger.info("Setup wizard completed")
+
+    def _on_audio_source_changed(self, mode: str, pid: int) -> None:
+        logger.info("Audio source changed: mode=%s pid=%d", mode, pid)
+        self.config.audio.capture_mode = mode
+        self.config.audio.target_app_pid = pid
+        save_config(self.config)
+
+        # 실행 중이면 캡처만 재시작 (추론 워커는 유지)
+        was_running = self._tray._is_running if self._tray else False
+        if was_running and self._capture is not None:
+            self._capture.stop()
+            self._capture = create_capture(self._worker.audio_queue, self.config.audio)
+            self._capture.start()
+            label = "시스템 전체" if mode == "system" else f"PID {pid}"
+            self._tray.show_info(f"오디오 소스 변경: {label}")
+        else:
+            self._capture = create_capture(self._worker.audio_queue, self.config.audio)
 
     def _on_settings(self) -> None:
         dialog = SettingsDialog(self.config)
