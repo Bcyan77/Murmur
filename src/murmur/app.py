@@ -74,6 +74,7 @@ class MurmurApp:
         )
 
         # 시그널 연결
+        self._overlay.position_dragged.connect(self._on_overlay_dragged)
         self._tray.start_requested.connect(self._on_start)
         self._tray.stop_requested.connect(self._on_stop)
         self._tray.overlay_toggle_requested.connect(self._on_overlay_toggle)
@@ -150,6 +151,13 @@ class MurmurApp:
         self.config = new_config
         self._overlay.update_config(new_config.overlay)
         logger.info("Setup wizard completed")
+
+    def _on_overlay_dragged(self, x: int, y: int) -> None:
+        self.config.overlay.position = "custom"
+        self.config.overlay.custom_x = x
+        self.config.overlay.custom_y = y
+        save_config(self.config)
+        logger.debug("Overlay dragged to (%d, %d)", x, y)
 
     def _on_audio_source_changed(self, mode: str, pid: int) -> None:
         logger.info("Audio source changed: mode=%s pid=%d", mode, pid)

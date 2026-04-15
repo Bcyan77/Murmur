@@ -76,6 +76,9 @@ class OverlayConfig:
     show_original: bool = True
     max_lines: int = 2
     position: str = "bottom-center"
+    # 드래그로 이동했을 때 저장되는 좌표. position == "custom"일 때만 사용.
+    custom_x: int = -1
+    custom_y: int = -1
 
 
 @dataclass

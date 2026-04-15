@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import platform
 
-from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -30,6 +30,9 @@ class SubtitleOverlay(QWidget):
     - 기본 상태: WS_EX_TRANSPARENT로 마우스 이벤트를 하위 창에 투과
     - Alt 키를 누른 상태에서 좌클릭 드래그로 위치 이동
     """
+
+    # 드래그로 위치가 변경될 때 발생. (x, y) 글로벌 좌표.
+    position_dragged = Signal(int, int)
 
     def __init__(self, config: OverlayConfig, parent=None) -> None:
         flags = (
@@ -75,7 +78,14 @@ class SubtitleOverlay(QWidget):
 
     def update_config(self, config: OverlayConfig) -> None:
         """설정 변경 시 오버레이를 즉시 갱신한다."""
+        prev_position = self._config.position
+        prev_custom = (self._config.custom_x, self._config.custom_y)
         self._config = config
+        if (
+            config.position != prev_position
+            or (config.position == "custom" and (config.custom_x, config.custom_y) != prev_custom)
+        ):
+            self._apply_position()
         self.update()
 
     # ── Qt 이벤트 ──────────────────────────────────────────────────────────────
@@ -139,18 +149,24 @@ class SubtitleOverlay(QWidget):
             self.move(event.globalPosition().toPoint() - self._drag_offset)
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_active:
             self._drag_active = False
+            self.position_dragged.emit(self.x(), self.y())
 
     # ── 내부 ──────────────────────────────────────────────────────────────────
 
     def _init_geometry(self) -> None:
-        screen = QApplication.primaryScreen().geometry()
+        screen = self._target_screen_geometry()
         w = int(screen.width() * _WIDTH_RATIO)
         h = 80  # 텍스트 없을 때 기본 높이
-        x = screen.left() + (screen.width() - w) // 2
-        y = screen.bottom() - h - _BOTTOM_MARGIN
+        x, y = self._compute_position(screen, w, h)
         self.setGeometry(x, y, w, h)
+
+    def _apply_position(self) -> None:
+        """position 설정이 바뀌었을 때 현재 크기 유지하고 좌표만 다시 계산."""
+        screen = self._target_screen_geometry()
+        x, y = self._compute_position(screen, self.width(), self.height())
+        self.move(x, y)
 
     def _recalc_height(self) -> None:
         """표시할 텍스트 기준으로 창 높이를 다시 계산하고 Y 위치를 조정한다."""
@@ -167,19 +183,52 @@ class SubtitleOverlay(QWidget):
 
         if self._config.show_original and self._original_text:
             n_lines += len(_wrap_text(self._original_text, orig_fm, text_w)[: self._config.max_lines])
-            line_h = orig_fm.height()
-        else:
-            line_h = tr_fm.height()
 
         n_lines += len(_wrap_text(self._translated_text, tr_fm, text_w)[: self._config.max_lines])
-        # 모든 줄의 높이를 번역 줄 기준으로 근사 (혼합이지만 큰 차이 없음)
         line_h = tr_fm.height()
 
         new_h = _PAD_V * 2 + n_lines * line_h + max(0, n_lines - 1) * _LINE_GAP
 
-        screen = QApplication.primaryScreen().geometry()
-        new_y = screen.bottom() - new_h - _BOTTOM_MARGIN
-        self.setGeometry(self.x(), new_y, self.width(), new_h)
+        screen = self._target_screen_geometry()
+        new_x, new_y = self._compute_position(screen, self.width(), new_h)
+        self.setGeometry(new_x, new_y, self.width(), new_h)
+
+    def _target_screen_geometry(self):
+        """현재 오버레이가 위치한 모니터 geometry를 반환한다.
+
+        position == "custom"인 경우 저장된 좌표가 있는 모니터를, 그 외에는
+        주 모니터를 사용한다.
+        """
+        if self._config.position == "custom" and self._config.custom_x >= 0:
+            pt = QPoint(self._config.custom_x, self._config.custom_y)
+            for screen in QApplication.screens():
+                if screen.geometry().contains(pt):
+                    return screen.geometry()
+        return QApplication.primaryScreen().geometry()
+
+    def _compute_position(self, screen, w: int, h: int) -> tuple[int, int]:
+        pos = self._config.position
+        if pos == "custom" and self._config.custom_x >= 0:
+            return self._config.custom_x, self._config.custom_y
+
+        left = screen.left()
+        right = screen.right()
+        top = screen.top()
+        bottom = screen.bottom()
+
+        if pos.endswith("-left"):
+            x = left + _BOTTOM_MARGIN
+        elif pos.endswith("-right"):
+            x = right - w - _BOTTOM_MARGIN
+        else:  # -center or unknown
+            x = left + (screen.width() - w) // 2
+
+        if pos.startswith("top-"):
+            y = top + _BOTTOM_MARGIN
+        else:  # bottom-* or unknown
+            y = bottom - h - _BOTTOM_MARGIN
+
+        return x, y
 
     def _apply_initial_click_through(self) -> None:
         if not self._click_through_applied:

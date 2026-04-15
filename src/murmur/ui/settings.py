@@ -50,6 +50,9 @@ _POSITIONS = [
     ("하단 좌측", "bottom-left"),
     ("하단 우측", "bottom-right"),
     ("상단 중앙", "top-center"),
+    ("상단 좌측", "top-left"),
+    ("상단 우측", "top-right"),
+    ("사용자 지정 (드래그 위치)", "custom"),
 ]
 
 _PRESETS = [
