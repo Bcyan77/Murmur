@@ -25,7 +25,8 @@ class VADSegmenter:
         self._silence_samples: int = 0
         self._silence_threshold = int(config.silence_duration_ms / 1000 * sample_rate)
         self._max_samples = int(config.max_single_segment_time / 1000 * sample_rate)
-        self._energy_threshold: float = 0.005
+        self._energy_threshold: float = config.energy_threshold
+        self._min_samples = int(config.min_segment_ms / 1000 * sample_rate)
         self._has_speech = False
 
     def feed(self, chunk: np.ndarray) -> np.ndarray | None:
@@ -68,8 +69,7 @@ class VADSegmenter:
         audio = np.concatenate(self._buffer).astype(np.float32)
         self.reset()
 
-        # Skip very short segments (< 0.3s)
-        if len(audio) < self._sample_rate * 0.3:
+        if len(audio) < self._min_samples:
             return None
 
         logger.debug(f"Segment: {len(audio) / self._sample_rate:.1f}s")

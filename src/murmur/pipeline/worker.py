@@ -18,6 +18,10 @@ class PipelineResult:
     translated_text: str
     source_language: str
     timestamp: float
+    # 지연시간(초): 각 스테이지 소요 + 첫 발화부터 결과까지 총 지연
+    stt_latency: float = 0.0
+    translation_latency: float = 0.0
+    total_latency: float = 0.0
 
 
 # 제어 메시지 타입
@@ -113,6 +117,7 @@ def _inference_loop(
 
     # 모델 import는 자식 프로세스 내에서 (spawn 시 부모와 공유 안 됨)
     from murmur.pipeline.stt import SpeechRecognizer
+    from murmur.pipeline.translation_buffer import TranslationBuffer
     from murmur.pipeline.translator import Translator
     from murmur.pipeline.vad import VADSegmenter
 
@@ -141,33 +146,91 @@ def _inference_loop(
 
     target_lang_code = _target_language_code(config.translator.target_language)
 
+    buffer_enabled = config.translator.buffer_enabled and translator is not None
+    buffer = TranslationBuffer(
+        max_chars=config.translator.buffer_max_chars,
+        flush_ms=config.translator.buffer_flush_ms,
+    )
+    flush_poll_s = max(0.05, config.translator.buffer_flush_ms / 1000 / 3)
+
     try:
         while True:
-            chunk = audio_queue.get()
+            try:
+                chunk = audio_queue.get(timeout=flush_poll_s)
+            except Empty:
+                # 오디오가 잠시 끊겼을 때 타임아웃 기반 버퍼 플러시 확인
+                if buffer_enabled:
+                    entry = buffer.maybe_timeout_flush(time.time())
+                    if entry is not None:
+                        _emit_translation(
+                            entry, translator, target_lang_code,
+                            result_queue, log,
+                        )
+                continue
+
             if chunk is SENTINEL:
                 log.info("Sentinel received, exiting")
+                if buffer_enabled:
+                    entry = buffer.flush()
+                    if entry is not None:
+                        _emit_translation(
+                            entry, translator, target_lang_code,
+                            result_queue, log,
+                        )
                 break
 
             segment = vad.feed(chunk)
             if segment is None:
+                if buffer_enabled:
+                    entry = buffer.maybe_timeout_flush(time.time())
+                    if entry is not None:
+                        _emit_translation(
+                            entry, translator, target_lang_code,
+                            result_queue, log,
+                        )
                 continue
 
+            stt_start = time.time()
             stt_result = stt.transcribe(segment, config.audio.sample_rate)
+            stt_latency = time.time() - stt_start
             if not stt_result.text.strip():
                 continue
 
-            # 대상 언어와 동일하면 번역 생략
-            if stt_result.language == target_lang_code or translator is None:
-                translated = stt_result.text
+            if buffer_enabled:
+                entry = buffer.add(stt_result.text, stt_result.language, time.time())
+                if entry is None:
+                    continue
+                text = entry.text
+                lang = entry.language
+                first_ts = entry.first_timestamp
             else:
-                tr_result = translator.translate(stt_result.text, stt_result.language)
-                translated = tr_result.translated_text
+                text = stt_result.text
+                lang = stt_result.language
+                first_ts = stt_start
 
+            # 대상 언어와 동일하면 번역 생략
+            tr_start = time.time()
+            if lang == target_lang_code or translator is None:
+                translated = text
+                tr_latency = 0.0
+            else:
+                tr_result = translator.translate(text, lang)
+                translated = tr_result.translated_text
+                tr_latency = time.time() - tr_start
+
+            now = time.time()
             result = PipelineResult(
-                original_text=stt_result.text,
+                original_text=text,
                 translated_text=translated,
-                source_language=stt_result.language,
-                timestamp=time.time(),
+                source_language=lang,
+                timestamp=now,
+                stt_latency=stt_latency,
+                translation_latency=tr_latency,
+                total_latency=now - first_ts,
+            )
+            log.debug(
+                "latency: stt=%.2fs tr=%.2fs total=%.2fs chars=%d",
+                stt_latency, tr_latency, result.total_latency, len(text),
             )
 
             _put_with_drop(result_queue, result, log)
@@ -175,6 +238,33 @@ def _inference_loop(
         log.exception("Inference loop error")
     finally:
         log.info("Inference loop terminated")
+
+
+def _emit_translation(
+    entry, translator, target_lang_code, result_queue, log,
+) -> None:
+    """타임아웃/종료 시 버퍼에 남은 항목을 번역해 결과 큐로 내보낸다."""
+    first_ts = entry.first_timestamp
+    tr_start = time.time()
+    if entry.language == target_lang_code or translator is None:
+        translated = entry.text
+        tr_latency = 0.0
+    else:
+        tr_result = translator.translate(entry.text, entry.language)
+        translated = tr_result.translated_text
+        tr_latency = time.time() - tr_start
+
+    now = time.time()
+    result = PipelineResult(
+        original_text=entry.text,
+        translated_text=translated,
+        source_language=entry.language,
+        timestamp=now,
+        stt_latency=0.0,  # 이 경로에서는 STT 단계가 이전에 측정됨
+        translation_latency=tr_latency,
+        total_latency=now - first_ts,
+    )
+    _put_with_drop(result_queue, result, log)
 
 
 def _target_language_code(target_name: str) -> str:

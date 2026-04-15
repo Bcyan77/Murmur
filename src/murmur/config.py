@@ -49,6 +49,8 @@ class VADConfig:
     model_name: str = "fsmn-vad"
     max_single_segment_time: int = 30000
     silence_duration_ms: int = 1500
+    energy_threshold: float = 0.005
+    min_segment_ms: int = 300
 
 
 @dataclass
@@ -68,6 +70,10 @@ class TranslatorConfig:
     n_gpu_layers: int = -1
     temperature: float = 0.1
     max_tokens: int = 256
+    # 번역 버퍼: 짧은 발화를 문장 단위로 모아서 번역 (SOV 어순 대응)
+    buffer_enabled: bool = True
+    buffer_max_chars: int = 200
+    buffer_flush_ms: int = 1500
 
 
 @dataclass
