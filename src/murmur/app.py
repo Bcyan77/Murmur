@@ -10,6 +10,7 @@ from murmur.audio.capture import BaseCapture, create_capture
 from murmur.config import MurmurConfig, load_config, save_config
 from murmur.pipeline.worker import InferenceWorker
 from murmur.ui.bridge import ResultBridge
+from murmur.ui.hotkeys import GlobalHotkeyManager
 from murmur.ui.overlay import SubtitleOverlay
 from murmur.ui.settings import SettingsDialog
 from murmur.ui.tray import SystemTrayIcon
@@ -55,6 +56,7 @@ class MurmurApp:
         self._overlay: SubtitleOverlay | None = None
         self._tray: SystemTrayIcon | None = None
         self._loader: _WorkerLoader | None = None
+        self._hotkeys: GlobalHotkeyManager | None = None
 
     def run(self) -> int:
         self._qt_app = QApplication.instance() or QApplication(sys.argv)
@@ -82,6 +84,14 @@ class MurmurApp:
         self._tray.audio_source_changed.connect(self._on_audio_source_changed)
         self._tray.quit_requested.connect(self._on_quit)
         self._bridge.result_received.connect(self._on_result)
+
+        # 전역 단축키
+        self._hotkeys = GlobalHotkeyManager(self._qt_app)
+        self._hotkeys.install(self._qt_app)
+        self._hotkeys.toggle_triggered.connect(self._on_hotkey_toggle)
+        self._hotkeys.overlay_triggered.connect(self._on_overlay_toggle)
+        self._hotkeys.settings_triggered.connect(self._on_settings)
+        self._apply_hotkeys()
 
         self._tray.show()
         logger.info("Murmur started — tray icon visible")
@@ -152,6 +162,29 @@ class MurmurApp:
         self._overlay.update_config(new_config.overlay)
         logger.info("Setup wizard completed")
 
+    def _apply_hotkeys(self) -> None:
+        if self._hotkeys is None:
+            return
+        failed = self._hotkeys.apply(
+            self.config.app.hotkey_toggle,
+            self.config.app.hotkey_overlay,
+            self.config.app.hotkey_settings,
+        )
+        if failed and self._tray is not None:
+            self._tray.show_error(
+                f"단축키 등록 실패: {', '.join(failed)}"
+            )
+
+    def _on_hotkey_toggle(self) -> None:
+        if self._tray is None:
+            return
+        if self._tray._is_loading:
+            return
+        if self._tray._is_running:
+            self._on_stop()
+        else:
+            self._on_start()
+
     def _on_overlay_dragged(self, x: int, y: int) -> None:
         self.config.overlay.position = "custom"
         self.config.overlay.custom_x = x
@@ -185,10 +218,14 @@ class MurmurApp:
         self.config = new_config
         # 오버레이 설정 즉시 반영
         self._overlay.update_config(new_config.overlay)
+        # 단축키 재등록
+        self._apply_hotkeys()
         logger.info("Settings applied")
 
     def _on_quit(self) -> None:
         logger.info("Quit requested")
+        if self._hotkeys:
+            self._hotkeys.unregister_all()
         if self._capture:
             self._capture.stop()
         if self._bridge:

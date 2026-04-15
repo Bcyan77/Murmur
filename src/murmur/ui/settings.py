@@ -337,6 +337,19 @@ class SettingsDialog(QDialog):
             self._log_level.addItem(lvl)
         layout.addRow("로그 레벨:", self._log_level)
 
+        # 단축키
+        self._hotkey_toggle = QLineEdit()
+        self._hotkey_toggle.setPlaceholderText("ctrl+shift+m")
+        layout.addRow("시작/정지 토글:", self._hotkey_toggle)
+
+        self._hotkey_overlay = QLineEdit()
+        self._hotkey_overlay.setPlaceholderText("ctrl+shift+o")
+        layout.addRow("자막 표시/숨김:", self._hotkey_overlay)
+
+        self._hotkey_settings = QLineEdit()
+        self._hotkey_settings.setPlaceholderText("ctrl+shift+s")
+        layout.addRow("설정 창 열기:", self._hotkey_settings)
+
         return widget
 
     # ── 설정 로드/저장 ─────────────────────────────────────────────────────────
@@ -373,6 +386,9 @@ class SettingsDialog(QDialog):
         self._ws_port.setEnabled(cfg.app.websocket_enabled)
         self._subtitle_log.setChecked(cfg.app.subtitle_log)
         _set_combo_by_text(self._log_level, cfg.app.log_level)
+        self._hotkey_toggle.setText(cfg.app.hotkey_toggle)
+        self._hotkey_overlay.setText(cfg.app.hotkey_overlay)
+        self._hotkey_settings.setText(cfg.app.hotkey_settings)
 
     def _collect_config(self) -> MurmurConfig:
         cfg = copy.deepcopy(self._config)
@@ -403,6 +419,9 @@ class SettingsDialog(QDialog):
         cfg.app.websocket_port = self._ws_port.value()
         cfg.app.subtitle_log = self._subtitle_log.isChecked()
         cfg.app.log_level = self._log_level.currentText()
+        cfg.app.hotkey_toggle = self._hotkey_toggle.text().strip().lower()
+        cfg.app.hotkey_overlay = self._hotkey_overlay.text().strip().lower()
+        cfg.app.hotkey_settings = self._hotkey_settings.text().strip().lower()
 
         return cfg
 

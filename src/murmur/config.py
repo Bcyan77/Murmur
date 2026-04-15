@@ -30,6 +30,9 @@ class AppConfig:
     websocket_port: int = 9090
     subtitle_log: bool = False
     log_level: str = "WARNING"
+    hotkey_toggle: str = "ctrl+shift+m"
+    hotkey_overlay: str = "ctrl+shift+o"
+    hotkey_settings: str = "ctrl+shift+s"
 
 
 @dataclass
