@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFontComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -70,10 +71,10 @@ _STT_MODELS = [
 ]
 
 _TRANSLATOR_MODELS = [
-    ("Aya 23-8B (Q4)", "aya-23-8b-q4"),
-    ("NLLB-200 3.3B", "nllb-200-3.3b"),
-    ("NLLB-200 600M", "nllb-200-600m"),
-    ("Qwen3-4B", "qwen3-4b"),
+    ("Aya 23-8B (Q4)", "bartowski/aya-23-8B-GGUF"),
+    ("NLLB-200 3.3B", "facebook/nllb-200-3.3B"),
+    ("NLLB-200 600M", "facebook/nllb-200-distilled-600M"),
+    ("Qwen3-4B (Q4)", "bartowski/Qwen3-4B-GGUF"),
 ]
 
 _VAD_MODELS = [
@@ -81,27 +82,27 @@ _VAD_MODELS = [
     ("Silero VAD", "silero-vad"),
 ]
 
-# 프리셋별 모델 설정
+# 프리셋별 모델 설정 (HF model_id 기준, presets.ALL_MODELS로 조회 가능)
 _PRESET_MODELS: dict[str, dict] = {
     "low_spec": {
         "stt": "FunAudioLLM/SenseVoiceSmall",
-        "translator": "nllb-200-600m",
+        "translator": "facebook/nllb-200-distilled-600M",
         "vad": "fsmn-vad",
     },
     "korean_optimized": {
         "stt": "FunAudioLLM/SenseVoiceSmall",
-        "translator": "aya-23-8b-q4",
+        "translator": "bartowski/aya-23-8B-GGUF",
         "vad": "fsmn-vad",
     },
     "multilang": {
         "stt": "openai/whisper-large-v3-turbo",
-        "translator": "nllb-200-3.3b",
-        "vad": "silero-vad",
+        "translator": "facebook/nllb-200-3.3B",
+        "vad": "snakers4/silero-vad",
     },
     "best_quality": {
         "stt": "nvidia/canary-qwen-2.5b",
-        "translator": "qwen3-4b",
-        "vad": "silero-vad",
+        "translator": "bartowski/Qwen3-4B-GGUF",
+        "vad": "snakers4/silero-vad",
     },
 }
 
@@ -163,8 +164,7 @@ class SettingsDialog(QDialog):
         # 캡처 모드
         self._capture_mode = QComboBox()
         self._capture_mode.addItem("시스템 전체 오디오", "system")
-        self._capture_mode.addItem("특정 앱 지정 (Phase 5)", "app")
-        self._capture_mode.model().item(1).setEnabled(False)
+        self._capture_mode.addItem("특정 앱 지정 (트레이 메뉴에서 앱 선택)", "app")
         layout.addRow("캡처 모드:", self._capture_mode)
 
         # 원본 언어
@@ -173,11 +173,11 @@ class SettingsDialog(QDialog):
             self._source_language.addItem(label, code)
         layout.addRow("원본 언어:", self._source_language)
 
-        # 번역 대상 언어
+        # 자막 언어
         self._target_language = QComboBox()
         for label, code in _TARGET_LANGUAGES:
             self._target_language.addItem(label, code)
-        layout.addRow("번역 언어:", self._target_language)
+        layout.addRow("자막 언어:", self._target_language)
 
         return widget
 
@@ -188,8 +188,9 @@ class SettingsDialog(QDialog):
         layout = QFormLayout(widget)
         layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
-        # 글꼴
-        self._font_family = QLineEdit()
+        # 글꼴 — QFontComboBox는 기본적으로 편집 가능 + 시스템 글꼴 자동완성
+        self._font_family = QFontComboBox()
+        self._font_family.setEditable(True)
         layout.addRow("글꼴:", self._font_family)
 
         # 글꼴 크기
@@ -280,6 +281,26 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(model_group)
 
+        # 모델 다운로드 — 현재 프리셋 기준
+        download_group = QGroupBox("모델 다운로드")
+        self._download_layout = QVBoxLayout(download_group)
+        self._download_rows: list = []
+        self._refresh_download_rows()
+        layout.addWidget(download_group)
+        self._preset.currentIndexChanged.connect(self._refresh_download_rows)
+
+        # 모델 저장 경로 열기
+        path_row = QWidget()
+        path_layout = QHBoxLayout(path_row)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.addWidget(QLabel("모델 저장 경로:"))
+        open_btn = QPushButton("폴더 열기")
+        open_btn.setFixedWidth(100)
+        open_btn.clicked.connect(self._open_models_dir)
+        path_layout.addStretch()
+        path_layout.addWidget(open_btn)
+        layout.addWidget(path_row)
+
         note = QLabel(
             "※ 프리셋 변경 시 개별 모델이 자동으로 설정됩니다.\n"
             "※ 개별 모델 수동 변경 시 프리셋이 '커스텀'으로 전환됩니다."
@@ -306,11 +327,10 @@ class SettingsDialog(QDialog):
         self._silence_duration.setSuffix(" 초")
         layout.addRow("무음 경계:", self._silence_duration)
 
-        # GPU 디바이스
+        # GPU 디바이스 — 감지된 CUDA 장치 목록을 동적으로 채움
         self._gpu_device = QComboBox()
         self._gpu_device.setEditable(True)
-        self._gpu_device.addItem("cuda:0")
-        self._gpu_device.addItem("cpu")
+        self._populate_gpu_devices()
         layout.addRow("GPU 디바이스:", self._gpu_device)
 
         # WebSocket
@@ -354,6 +374,27 @@ class SettingsDialog(QDialog):
 
     # ── 설정 로드/저장 ─────────────────────────────────────────────────────────
 
+    def _populate_gpu_devices(self) -> None:
+        """감지된 CUDA 장치를 콤보박스에 '인덱스 — 모델명' 형식으로 추가."""
+        try:
+            import torch
+        except ImportError:
+            torch = None  # type: ignore[assignment]
+
+        if torch is not None and torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                dev_id = f"cuda:{i}"
+                try:
+                    name = torch.cuda.get_device_name(i)
+                    label = f"{dev_id} — {name}"
+                except Exception:
+                    label = dev_id
+                self._gpu_device.addItem(label, dev_id)
+        else:
+            # torch 없거나 CUDA 미지원 — 기본 항목만
+            self._gpu_device.addItem("cuda:0", "cuda:0")
+        self._gpu_device.addItem("cpu", "cpu")
+
     def _load_config(self) -> None:
         cfg = self._config
 
@@ -363,7 +404,7 @@ class SettingsDialog(QDialog):
         _set_combo_by_data(self._target_language, cfg.translator.target_language)
 
         # 자막 탭
-        self._font_family.setText(cfg.overlay.font_family)
+        self._font_family.setCurrentFont(QFont(cfg.overlay.font_family))
         self._font_size.setValue(cfg.overlay.font_size)
         self._font_color = cfg.overlay.font_color
         self._update_color_preview()
@@ -380,7 +421,9 @@ class SettingsDialog(QDialog):
 
         # 고급 탭
         self._silence_duration.setValue(cfg.vad.silence_duration_ms / 1000.0)
-        _set_combo_by_text(self._gpu_device, cfg.stt.device)
+        if not _set_combo_by_data(self._gpu_device, cfg.stt.device):
+            # 감지된 장치에 없으면 편집 가능 텍스트로 세팅
+            self._gpu_device.setCurrentText(cfg.stt.device)
         self._ws_enabled.setChecked(cfg.app.websocket_enabled)
         self._ws_port.setValue(cfg.app.websocket_port)
         self._ws_port.setEnabled(cfg.app.websocket_enabled)
@@ -399,7 +442,11 @@ class SettingsDialog(QDialog):
         cfg.translator.target_language = self._target_language.currentData()
 
         # 자막
-        cfg.overlay.font_family = self._font_family.text().strip() or "Malgun Gothic"
+        cfg.overlay.font_family = (
+            self._font_family.currentFont().family()
+            or self._font_family.currentText().strip()
+            or "Malgun Gothic"
+        )
         cfg.overlay.font_size = self._font_size.value()
         cfg.overlay.font_color = self._font_color
         cfg.overlay.bg_opacity = self._bg_opacity.value() / 100.0
@@ -414,7 +461,12 @@ class SettingsDialog(QDialog):
 
         # 고급
         cfg.vad.silence_duration_ms = int(self._silence_duration.value() * 1000)
-        cfg.stt.device = self._gpu_device.currentText().strip()
+        # itemData에 "cuda:0" 같은 식별자가 있으면 우선 사용, 없으면 편집된 텍스트
+        device_data = self._gpu_device.currentData()
+        if device_data:
+            cfg.stt.device = device_data
+        else:
+            cfg.stt.device = self._gpu_device.currentText().strip()
         cfg.app.websocket_enabled = self._ws_enabled.isChecked()
         cfg.app.websocket_port = self._ws_port.value()
         cfg.app.subtitle_log = self._subtitle_log.isChecked()
@@ -432,6 +484,49 @@ class SettingsDialog(QDialog):
         save_config(self._config)
         self.settings_applied.emit(self._config)
         self.accept()
+
+    def _refresh_download_rows(self) -> None:
+        """현재 선택된 프리셋 기준으로 다운로드 행을 다시 구성한다.
+
+        커스텀 프리셋인 경우 각 콤보박스(STT/번역/VAD)의 현재 선택 값을
+        ALL_MODELS 레지스트리에서 찾아 행을 만든다.
+        """
+        from murmur.presets import ALL_MODELS, PRESETS
+        from murmur.ui.model_download import DownloadRow
+
+        while self._download_layout.count():
+            item = self._download_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._download_rows.clear()
+
+        preset_id = self._preset.currentData()
+        if preset_id == "custom":
+            ids = [
+                self._stt_model.currentData(),
+                self._translator_model.currentData(),
+                self._vad_model.currentData(),
+            ]
+            specs = [ALL_MODELS[i] for i in ids if i in ALL_MODELS]
+        else:
+            preset = next((p for p in PRESETS if p.id.value == preset_id), None)
+            if preset is None:
+                return
+            specs = [preset.stt, preset.translator, preset.vad]
+
+        for spec in specs:
+            row = DownloadRow(spec.name, spec.model_id, spec.size_mb, spec.source)
+            self._download_rows.append(row)
+            self._download_layout.addWidget(row)
+
+    def _open_models_dir(self) -> None:
+        """탐색기에서 %APPDATA%/Murmur/models/ 폴더를 연다."""
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from murmur.config import MODELS_DIR
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(MODELS_DIR)))
 
     def _pick_color(self) -> None:
         initial = QColor(self._font_color)
@@ -461,17 +556,20 @@ class SettingsDialog(QDialog):
 
     def _on_model_manual_change(self) -> None:
         if self._preset_changing:
+            self._refresh_download_rows()
             return
         _set_combo_by_data(self._preset, "custom")
+        self._refresh_download_rows()
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────────
 
-def _set_combo_by_data(combo: QComboBox, data: str) -> None:
+def _set_combo_by_data(combo: QComboBox, data: str) -> bool:
     for i in range(combo.count()):
         if combo.itemData(i) == data:
             combo.setCurrentIndex(i)
-            return
+            return True
+    return False
 
 
 def _set_combo_by_text(combo: QComboBox, text: str) -> None:
