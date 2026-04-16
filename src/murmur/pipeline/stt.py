@@ -25,18 +25,43 @@ class SpeechRecognizer:
         self._config = config
         self._model = None
 
+    # FunASR가 로드 가능한 것으로 확인된 HF 모델.
+    _SUPPORTED_MODELS = {
+        "FunAudioLLM/SenseVoiceSmall",
+        "openai/whisper-large-v3-turbo",
+    }
+
     def load_model(self) -> None:
         from funasr import AutoModel
 
-        logger.info(f"Loading STT model: {self._config.model_name}")
+        if self._config.model_name not in self._SUPPORTED_MODELS:
+            raise RuntimeError(
+                f"STT 모델 '{self._config.model_name}'은(는) 현재 지원되지 않습니다. "
+                f"설정 → 모델 탭에서 다음 중 하나를 선택하세요: "
+                f"{', '.join(sorted(self._SUPPORTED_MODELS))}"
+            )
+
+        # 먼저 HF 캐시에 모델을 내려받은 뒤 로컬 스냅샷 경로를 funasr에 전달한다.
+        # repo ID로 전달하면 funasr가 configuration.json의 'model' 필드를
+        # 제대로 읽지 못하고 repo ID를 클래스 이름으로 해석해 "not registered"
+        # 오류가 발생하는 경우가 있다.
+        model_path = self._ensure_downloaded(self._config.model_name)
+
+        logger.info("Loading STT model: %s (from %s)", self._config.model_name, model_path)
         start = time.time()
         self._model = AutoModel(
-            model=self._config.model_name,
+            model=model_path,
             device=self._config.device,
-            hub="hf",
+            disable_update=True,
         )
         elapsed = time.time() - start
         logger.info(f"STT model loaded in {elapsed:.1f}s")
+
+    @staticmethod
+    def _ensure_downloaded(repo_id: str) -> str:
+        """HF 스냅샷을 내려받고 로컬 디렉토리 경로를 반환한다."""
+        from huggingface_hub import snapshot_download
+        return snapshot_download(repo_id)
 
     def transcribe(
         self, audio: np.ndarray, sample_rate: int = 16000

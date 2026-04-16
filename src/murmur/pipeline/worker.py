@@ -108,10 +108,24 @@ def _inference_loop(
 
     모듈 최상위 함수여야 picklable 요구사항을 만족하고 spawn 방식에서 동작한다.
     """
-    # 자식 프로세스 로깅 설정
+    # pythonw.exe에서 spawn된 자식은 sys.stdout/stderr이 None이다. tqdm이나
+    # huggingface_hub 등이 None.write를 호출하면 크래시하므로 devnull로 대체한다.
+    import os as _os
+    import sys as _sys
+    if _sys.stdout is None:
+        _sys.stdout = open(_os.devnull, "w", encoding="utf-8")
+    if _sys.stderr is None:
+        _sys.stderr = open(_os.devnull, "w", encoding="utf-8")
+
+    # 자식 프로세스 로깅 설정 — murmur.log에 파일 기록
+    from murmur.config import APP_DIR
+    log_file = str(APP_DIR / "murmur.log")
     logging.basicConfig(
+        filename=log_file,
+        filemode="a",
         level=logging.INFO,
         format="%(asctime)s [%(process)d %(name)s] %(levelname)s: %(message)s",
+        encoding="utf-8",
     )
     log = logging.getLogger("inference")
 
@@ -122,27 +136,35 @@ def _inference_loop(
     from murmur.pipeline.vad import VADSegmenter
 
     try:
-        log.info("Loading models...")
+        log.info("Loading STT model...")
         vad = VADSegmenter(config.vad, sample_rate=config.audio.sample_rate)
         stt = SpeechRecognizer(config.stt)
         stt.load_model()
-
-        translator: Translator | None = None
-        if config.translator.model_path:
-            translator = Translator(config.translator)
-            translator.load_model()
-        else:
-            log.warning("No translator model_path set; translation disabled")
-
-        result_queue.put({"type": READY})
-        log.info("Inference loop started")
     except Exception as e:
-        log.exception("Failed to initialize inference process")
+        log.exception("Failed to load STT model")
         try:
-            result_queue.put({"type": ERROR, "message": str(e)})
+            result_queue.put({"type": ERROR, "message": f"STT 로드 실패: {e}"})
         except Exception:
             pass
         return
+
+    translator: Translator | None = None
+    if config.translator.model_path:
+        try:
+            log.info("Loading translator model...")
+            translator = Translator(config.translator)
+            translator.load_model()
+        except Exception as e:
+            log.exception("Failed to load translator — continuing in STT-only mode")
+            translator = None
+    else:
+        log.warning("No translator model_path set; translation disabled")
+
+    try:
+        result_queue.put({"type": READY})
+        log.info("Inference loop started (translator=%s)", translator is not None)
+    except Exception:
+        pass
 
     target_lang_code = _target_language_code(config.translator.target_language)
 
