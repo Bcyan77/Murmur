@@ -1,7 +1,6 @@
 @echo off
 REM 테스트 스크립트 실행 배치 — 사용법: run_test.bat [capture|stt|realtime_stt|translator|pipeline]
 cd /d "%~dp0"
-call .venv\Scripts\activate.bat
 
 if "%~1"=="" (
     echo.
@@ -18,5 +17,5 @@ if "%~1"=="" (
     exit /b 1
 )
 
-python tests\test_%1.py %2 %3 %4 %5
+uv run python tests\test_%1.py %2 %3 %4 %5
 pause
