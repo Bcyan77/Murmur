@@ -42,6 +42,7 @@ class Translator:
     def __init__(self, config: TranslatorConfig) -> None:
         self._config = config
         self._llm = None
+        self._system_message: dict | None = None
 
     def load_model(self) -> None:
         if not self._config.model_path:
@@ -63,28 +64,37 @@ class Translator:
         elapsed = time.time() - start
         logger.info(f"Translation model loaded in {elapsed:.1f}s")
 
+        # 대상 언어 기반 시스템 프롬프트를 한 번만 구성한다.
+        # source_lang을 포함하지 않아 프롬프트가 호출 간 불변이 되므로
+        # llama.cpp KV 캐시가 시스템 프롬프트 토큰을 자동 재사용한다.
+        # `/no_think`는 Qwen3 thinking 모드 비활성 플래그.
+        target_name = self._config.target_language
+        self._system_message = {
+            "role": "system",
+            "content": (
+                f"/no_think You are a professional translator. "
+                f"Translate the user's text to {target_name}. "
+                f"Reply with ONLY the translation — no explanations, "
+                f"no tags, no thinking, no quotes."
+            ),
+        }
+
+        # 워밍업: 시스템 프롬프트 토큰을 미리 평가하여 KV 캐시에 적재
+        self._llm.create_chat_completion(
+            messages=[self._system_message, {"role": "user", "content": "Hi"}],
+            max_tokens=1,
+        )
+        logger.info("Translation prompt cache warmed up")
+
     def translate(self, text: str, source_lang: str = "auto") -> TranslationResult:
         if self._llm is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        source_name = _LANG_CODE_TO_NAME.get(source_lang, source_lang)
-        target_name = self._config.target_language
-
-        # llama-cpp의 create_chat_completion은 GGUF에 포함된 채팅 템플릿을
-        # 모델별로 자동 적용한다 (Aya, Qwen3, Llama 등 호환).
-        # `/no_think`는 Qwen3의 thinking 모드 비활성 플래그. Aya 등 다른 모델은
-        # 무시하므로 항상 포함해도 안전하다.
-        system_msg = (
-            f"/no_think You are a professional translator. Translate the user's "
-            f"text from {source_name} to {target_name}. Reply with ONLY the "
-            f"translation — no explanations, no tags, no thinking, no quotes."
-        )
-
         start = time.time()
         output = self._llm.create_chat_completion(
             messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": text},
+                self._system_message,               # 불변 — KV 캐시 히트
+                {"role": "user", "content": text},   # 이것만 새로 평가
             ],
             max_tokens=self._config.max_tokens,
             temperature=self._config.temperature,
@@ -98,7 +108,7 @@ class Translator:
             original_text=text,
             translated_text=translated,
             source_language=source_lang,
-            target_language=target_name,
+            target_language=self._config.target_language,
             process_time_ms=process_time_ms,
         )
 
