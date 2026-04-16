@@ -78,9 +78,9 @@ run.bat
 
 ## 설정
 
-- 설정 파일: `%APPDATA%\Murmur\config.toml` (TOML)
+- 설정 파일: `%APPDATA%\Murmur\config.toml`
 - 모델 저장: `%APPDATA%\Murmur\models\`
-- 자막 로그: `%APPDATA%\Murmur\logs\` (SRT 포맷, 옵션)
+- 자막 로그: `%APPDATA%\Murmur\logs\`
 
 설정 창 탭:
 - **오디오** — 캡처 모드, 원문/대상 언어
@@ -140,7 +140,7 @@ python tests/test_pipeline.py          # 전체 파이프라인 통합
 외부 모델의 라이선스는 별도입니다.
 - SenseVoice / Aya 23 / MADLAD-400: Apache 2.0
 - Whisper: MIT
-- NLLB: CC-BY-NC 4.0 (비상업 전용)
+- NLLB: CC-BY-NC 4.0
 
 ## 진행 상황
 

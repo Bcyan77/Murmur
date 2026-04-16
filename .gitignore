@@ -31,3 +31,4 @@ test_*_output.*
 
 # CLAUDE
 CLAUDE.local.md
+.claude/
