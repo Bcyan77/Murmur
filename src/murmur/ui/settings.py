@@ -67,14 +67,13 @@ _PRESETS = [
 _STT_MODELS = [
     ("SenseVoice-Small", "FunAudioLLM/SenseVoiceSmall"),
     ("Whisper large-v3-turbo", "openai/whisper-large-v3-turbo"),
-    ("Canary-Qwen 2.5B", "nvidia/canary-qwen-2.5b"),
 ]
 
 _TRANSLATOR_MODELS = [
     ("Aya 23-8B (Q4)", "bartowski/aya-23-8B-GGUF"),
     ("NLLB-200 3.3B", "facebook/nllb-200-3.3B"),
     ("NLLB-200 600M", "facebook/nllb-200-distilled-600M"),
-    ("Qwen3-4B (Q4)", "bartowski/Qwen3-4B-GGUF"),
+    ("Qwen3-4B (Q4)", "Qwen/Qwen3-4B-GGUF"),
 ]
 
 _VAD_MODELS = [
@@ -100,8 +99,8 @@ _PRESET_MODELS: dict[str, dict] = {
         "vad": "snakers4/silero-vad",
     },
     "best_quality": {
-        "stt": "nvidia/canary-qwen-2.5b",
-        "translator": "bartowski/Qwen3-4B-GGUF",
+        "stt": "FunAudioLLM/SenseVoiceSmall",
+        "translator": "Qwen/Qwen3-4B-GGUF",
         "vad": "snakers4/silero-vad",
     },
 }
@@ -321,11 +320,23 @@ class SettingsDialog(QDialog):
 
         # 무음 경계
         self._silence_duration = QDoubleSpinBox()
-        self._silence_duration.setRange(0.5, 5.0)
+        self._silence_duration.setRange(0.3, 5.0)
         self._silence_duration.setSingleStep(0.1)
         self._silence_duration.setDecimals(1)
         self._silence_duration.setSuffix(" 초")
         layout.addRow("무음 경계:", self._silence_duration)
+
+        # 번역 버퍼
+        self._buffer_enabled = QCheckBox("활성화")
+        layout.addRow("번역 버퍼 사용:", self._buffer_enabled)
+
+        self._buffer_flush = QDoubleSpinBox()
+        self._buffer_flush.setRange(0.2, 3.0)
+        self._buffer_flush.setSingleStep(0.1)
+        self._buffer_flush.setDecimals(1)
+        self._buffer_flush.setSuffix(" 초")
+        self._buffer_enabled.toggled.connect(self._buffer_flush.setEnabled)
+        layout.addRow("번역 버퍼 타임아웃:", self._buffer_flush)
 
         # GPU 디바이스 — 감지된 CUDA 장치 목록을 동적으로 채움
         self._gpu_device = QComboBox()
@@ -369,6 +380,15 @@ class SettingsDialog(QDialog):
         self._hotkey_settings = QLineEdit()
         self._hotkey_settings.setPlaceholderText("ctrl+shift+s")
         layout.addRow("설정 창 열기:", self._hotkey_settings)
+
+        tradeoff = QLabel(
+            "※ 무음 경계 / 버퍼 타임아웃을 줄이면 자막 지연이 짧아지지만, 천천히 "
+            "말하거나 문장 중간에 멈추는 경우 자막이 끊겨 표시될 수 있습니다. "
+            "짧은 조각을 개별 번역하면 한국어 어순 품질이 낮아질 수 있습니다."
+        )
+        tradeoff.setWordWrap(True)
+        tradeoff.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addRow(tradeoff)
 
         return widget
 
@@ -421,6 +441,9 @@ class SettingsDialog(QDialog):
 
         # 고급 탭
         self._silence_duration.setValue(cfg.vad.silence_duration_ms / 1000.0)
+        self._buffer_enabled.setChecked(cfg.translator.buffer_enabled)
+        self._buffer_flush.setValue(cfg.translator.buffer_flush_ms / 1000.0)
+        self._buffer_flush.setEnabled(cfg.translator.buffer_enabled)
         if not _set_combo_by_data(self._gpu_device, cfg.stt.device):
             # 감지된 장치에 없으면 편집 가능 텍스트로 세팅
             self._gpu_device.setCurrentText(cfg.stt.device)
@@ -461,6 +484,8 @@ class SettingsDialog(QDialog):
 
         # 고급
         cfg.vad.silence_duration_ms = int(self._silence_duration.value() * 1000)
+        cfg.translator.buffer_enabled = self._buffer_enabled.isChecked()
+        cfg.translator.buffer_flush_ms = int(self._buffer_flush.value() * 1000)
         # itemData에 "cuda:0" 같은 식별자가 있으면 우선 사용, 없으면 편집된 텍스트
         device_data = self._gpu_device.currentData()
         if device_data:
@@ -494,10 +519,14 @@ class SettingsDialog(QDialog):
         from murmur.presets import ALL_MODELS, PRESETS
         from murmur.ui.model_download import DownloadRow
 
+        # 이전 행과 addStretch 모두 제거 — deleteLater는 비동기이므로
+        # 먼저 setParent(None)으로 화면에서 즉시 분리한다.
         while self._download_layout.count():
             item = self._download_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
         self._download_rows.clear()
 
         preset_id = self._preset.currentData()
@@ -515,9 +544,25 @@ class SettingsDialog(QDialog):
             specs = [preset.stt, preset.translator, preset.vad]
 
         for spec in specs:
-            row = DownloadRow(spec.name, spec.model_id, spec.size_mb, spec.source)
+            row = DownloadRow(
+                spec.name,
+                spec.model_id,
+                spec.size_mb,
+                spec.source,
+                gguf_filename=spec.gguf_filename,
+            )
+            row.downloaded.connect(self._on_gguf_downloaded)
             self._download_rows.append(row)
             self._download_layout.addWidget(row)
+        self._download_layout.addStretch()
+
+    def _on_gguf_downloaded(self, *args: str) -> None:
+        """GGUF 번역 모델 다운로드 완료 시 config.translator.model_path 자동 설정.
+
+        시그널 시그너처: (model_id, local_path). model_id는 여기서 사용하지 않음.
+        """
+        if len(args) >= 2:
+            self._config.translator.model_path = args[1]
 
     def _open_models_dir(self) -> None:
         """탐색기에서 %APPDATA%/Murmur/models/ 폴더를 연다."""

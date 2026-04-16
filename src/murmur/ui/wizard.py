@@ -248,7 +248,13 @@ class _Step2Widget(QWidget):
             return
 
         for spec in [self._preset.stt, self._preset.translator, self._preset.vad]:
-            row = _DownloadRow(spec.name, spec.model_id, spec.size_mb, spec.source)
+            row = _DownloadRow(
+                spec.name,
+                spec.model_id,
+                spec.size_mb,
+                spec.source,
+                gguf_filename=spec.gguf_filename,
+            )
             self._download_rows[spec.model_id] = row
             self._models_layout.addWidget(row)
 

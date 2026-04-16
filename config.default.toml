@@ -5,6 +5,9 @@ websocket_enabled = false
 websocket_port = 9090
 subtitle_log = false
 log_level = "WARNING"
+hotkey_toggle = "ctrl+shift+m"
+hotkey_overlay = "ctrl+shift+o"
+hotkey_settings = "ctrl+shift+s"
 
 [audio]
 sample_rate = 16000
@@ -16,7 +19,9 @@ target_app_pid = 0
 [vad]
 model_name = "fsmn-vad"
 max_single_segment_time = 30000
-silence_duration_ms = 1500
+silence_duration_ms = 700
+energy_threshold = 0.005
+min_segment_ms = 300
 
 [stt]
 model_name = "FunAudioLLM/SenseVoiceSmall"
@@ -32,6 +37,9 @@ n_ctx = 2048
 n_gpu_layers = -1
 temperature = 0.1
 max_tokens = 256
+buffer_enabled = true
+buffer_max_chars = 200
+buffer_flush_ms = 500
 
 [overlay]
 font_family = "Malgun Gothic"
@@ -41,3 +49,5 @@ bg_opacity = 0.8
 show_original = true
 max_lines = 2
 position = "bottom-center"
+custom_x = -1
+custom_y = -1

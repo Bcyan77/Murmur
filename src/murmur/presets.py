@@ -23,6 +23,8 @@ class ModelSpec:
     size_mb: int        # 대략적인 다운로드 크기 (MB)
     source: str         # "huggingface" | "gguf" | "builtin"
     is_optional: bool = False
+    # source == "gguf"일 때만 의미 있음. 지정되면 hf_hub_download로 그 파일만 받는다.
+    gguf_filename: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,13 +54,6 @@ _WHISPER_TURBO = ModelSpec(
     size_mb=1600,
     source="huggingface",
 )
-_CANARY_QWEN = ModelSpec(
-    name="Canary-Qwen 2.5B",
-    model_id="nvidia/canary-qwen-2.5b",
-    size_mb=5000,
-    source="huggingface",
-)
-
 _NLLB_600M = ModelSpec(
     name="NLLB-200 600M",
     model_id="facebook/nllb-200-distilled-600M",
@@ -72,16 +67,18 @@ _NLLB_3B = ModelSpec(
     source="huggingface",
 )
 _AYA_23_8B_Q4 = ModelSpec(
-    name="Aya 23-8B (GGUF Q4)",
+    name="Aya 23-8B (GGUF Q4_K_M)",
     model_id="bartowski/aya-23-8B-GGUF",
-    size_mb=4700,
+    size_mb=5060,
     source="gguf",
+    gguf_filename="aya-23-8B-Q4_K_M.gguf",
 )
 _QWEN3_4B = ModelSpec(
-    name="Qwen3-4B (GGUF Q4)",
-    model_id="bartowski/Qwen3-4B-GGUF",
-    size_mb=2600,
+    name="Qwen3-4B (GGUF Q4_K_M)",
+    model_id="Qwen/Qwen3-4B-GGUF",
+    size_mb=2500,
     source="gguf",
+    gguf_filename="Qwen3-4B-Q4_K_M.gguf",
 )
 
 _FSMN_VAD = ModelSpec(
@@ -105,7 +102,6 @@ ALL_MODELS: dict[str, ModelSpec] = {
     for spec in (
         _SENSE_VOICE,
         _WHISPER_TURBO,
-        _CANARY_QWEN,
         _NLLB_600M,
         _NLLB_3B,
         _AYA_23_8B_Q4,
@@ -155,10 +151,10 @@ PRESETS: list[Preset] = [
     Preset(
         id=PresetID.BEST_QUALITY,
         name="최고 정확도",
-        description="최상위 STT + LLM 번역. 16GB VRAM 이상 필요.",
+        description="SenseVoice STT + Qwen3-4B LLM 번역. 16GB VRAM 이상 권장.",
         required_vram_gb=16.0,
         requires_cuda=True,
-        stt=_CANARY_QWEN,
+        stt=_SENSE_VOICE,
         translator=_QWEN3_4B,
         vad=_SILERO_VAD,
         quality_stars=5,

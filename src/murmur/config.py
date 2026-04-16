@@ -48,7 +48,7 @@ class AudioConfig:
 class VADConfig:
     model_name: str = "fsmn-vad"
     max_single_segment_time: int = 30000
-    silence_duration_ms: int = 1500
+    silence_duration_ms: int = 700
     energy_threshold: float = 0.005
     min_segment_ms: int = 300
 
@@ -73,7 +73,7 @@ class TranslatorConfig:
     # 번역 버퍼: 짧은 발화를 문장 단위로 모아서 번역 (SOV 어순 대응)
     buffer_enabled: bool = True
     buffer_max_chars: int = 200
-    buffer_flush_ms: int = 1500
+    buffer_flush_ms: int = 500
 
 
 @dataclass
